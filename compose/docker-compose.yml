@@ -1,0 +1,61 @@
+# 家里那台机器的服务编排
+# 之前是一堆散装的 systemd unit，迁移到 compose 之后只需要 docker compose up -d
+# 注意：这套配置绑的是 127.0.0.1，外网统一走 nginx 反代
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - app
+
+  app:
+    build: ./app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=512M
+      - --slow-query-log=1
+      - --long-query-time=1
+    environment:
+      MYSQL_DATABASE: app
+      MYSQL_USER: app
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./backup:/backup
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb
+    volumes:
+      - redis-data:/data
+
+volumes:
+  mysql-data:
+  redis-data:
